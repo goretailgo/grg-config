@@ -1,0 +1,25 @@
+<?xml version="1.0" encoding="utf-8"?>
+<odoo>
+    <record id="res_config_settings_view_form_grg" model="ir.ui.view">
+        <field name="name">res.config.settings.view.form.inherit.grg_config</field>
+        <field name="model">res.config.settings</field>
+        <field name="inherit_id" ref="base.res_config_settings_view_form"/>
+        <field name="arch" type="xml">
+            <xpath expr="//form" position="inside">
+                <app data-string="GoRetailGo" string="GoRetailGo" name="grg_config">
+                    <block title="GoRetailGo Customizations">
+                        <setting id="grg_quick_upi_setting" string="Quick UPI Pay Button" help="Show the Quick UPI Pay button on the POS Payment screen.">
+                            <field name="grg_quick_upi_enabled"/>
+                        </setting>
+                        <setting id="grg_theme_setting" string="GoRetailGo Branding Theme" help="Apply GoRetailGo brand colors across the backend and POS.">
+                            <field name="grg_theme_enabled"/>
+                        </setting>
+                        <setting id="grg_gst_setting" string="Auto-activate GST Purchase Taxes" help="Turning this off does not deactivate taxes already active.">
+                            <field name="grg_gst_tax_autoactivate"/>
+                        </setting>
+                    </block>
+                </app>
+            </xpath>
+        </field>
+    </record>
+</odoo>

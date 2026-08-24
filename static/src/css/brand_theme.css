@@ -1,0 +1,33 @@
+body.grg-theme-active {
+    --grg-brand-navy: #1a2e5e;
+    --grg-brand-orange: #e8630a;
+    --grg-brand-orange-dark: #d4860a;
+}
+body.grg-theme-active .o_main_navbar {
+    background-color: var(--grg-brand-navy) !important;
+}
+body.grg-theme-active .o_menu_sections {
+    background-color: var(--grg-brand-navy) !important;
+}
+body.grg-theme-active .o_menu_sections .o_nav_entry,
+body.grg-theme-active .o_menu_sections .dropdown-toggle {
+    background-color: var(--grg-brand-navy) !important;
+    color: #ffffff !important;
+}
+body.grg-theme-active .o_menu_sections .o_nav_entry:hover,
+body.grg-theme-active .o_menu_sections .dropdown-toggle:hover,
+body.grg-theme-active .o_menu_sections .dropdown.show.dropdown-toggle {
+    background-color: var(--grg-brand-orange) !important;
+    color: #ffffff !important;
+}
+body.grg-theme-active .btn-primary {
+    background-color: var(--grg-brand-orange) !important;
+    border-color: var(--grg-brand-orange) !important;
+    color: #ffffff !important;
+}
+body.grg-theme-active .btn-primary:hover,
+body.grg-theme-active .btn-primary:focus,
+body.grg-theme-active .btn-primary:active {
+    background-color: var(--grg-brand-orange-dark) !important;
+    border-color: var(--grg-brand-orange-dark) !important;
+}

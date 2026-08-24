@@ -4,6 +4,7 @@ import { patch } from "@web/core/utils/patch";
 import { useService } from "@web/core/utils/hooks";
 import { AlertDialog } from "@web/core/confirmation_dialog/confirmation_dialog";
 import { ActionpadWidget } from "@point_of_sale/app/screens/product_screen/action_pad/action_pad";
+import { session } from "@web/session";
 
 patch(ActionpadWidget, {
     template: "grg_config.ActionpadWidget",
@@ -13,6 +14,10 @@ patch(ActionpadWidget.prototype, {
     setup() {
         super.setup();
         this.dialog = useService("dialog");
+    },
+
+    get showQuickUpi() {
+        return session.grg_quick_upi_enabled !== false;
     },
 
     async onQuickUpiPay() {
