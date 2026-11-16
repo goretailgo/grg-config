@@ -11,23 +11,28 @@ patch(PaymentScreen.prototype, {
     },
 
     async _quickUpiAutoPay() {
-        const order = this.pos.getOrder();
-        const methodId = order?.uiState?.quickPayMethodId;
-        if (!methodId) {
-            return;
-        }
-        order.uiState.quickPayMethodId = null;
+        try {
+            const order = this.currentOrder || this.pos.getOrder();
+            const methodId = order?.uiState?.quickPayMethodId;
+            if (!methodId) {
+                return;
+            }
+            order.uiState.quickPayMethodId = null;
 
-        const method = this.pos.models["pos.payment.method"].get(methodId);
-        if (!method) {
-            return;
-        }
+            const method = this.pos.models["pos.payment.method"].get(methodId);
+            if (!method) {
+                return;
+            }
 
-        const result = order.addPaymentline(method);
-        if (!result?.status) {
-            return;
-        }
+            const result = order.addPaymentline(method);
+            if (!result?.status) {
+                return;
+            }
 
-        await this.validateOrder(true);
+            await this.validateOrder(true);
+        } catch (e) {
+            // Never crash the POS: cashier can still press Validate manually
+            console.error("[grg_config] Quick UPI auto-pay failed:", e);
+        }
     },
 });

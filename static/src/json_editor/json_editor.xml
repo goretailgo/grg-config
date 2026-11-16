@@ -1,0 +1,147 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<templates xml:space="preserve">
+
+    <t t-name="grg_config.JsonEditor">
+        <div class="o_grg_json_editor w-100">
+            <div class="o_grg_je_toolbar d-flex flex-wrap align-items-center gap-2 mb-2">
+                <div class="btn-group btn-group-sm" role="group">
+                    <button type="button" t-attf-class="btn #{state.mode === 'visual' ? 'btn-primary' : 'btn-outline-secondary'}" t-on-click="() => this.setMode('visual')">
+                        <i class="fa fa-sitemap me-1"/>Visual
+                    </button>
+                    <button type="button" t-attf-class="btn #{state.mode === 'code' ? 'btn-primary' : 'btn-outline-secondary'}" t-on-click="() => this.setMode('code')">
+                        <i class="fa fa-code me-1"/>JSON
+                    </button>
+                </div>
+                <span t-if="!state.error" class="badge rounded-pill text-bg-success"><i class="fa fa-check me-1"/>Valid JSON</span>
+                <span t-else="" class="badge rounded-pill text-bg-danger"><i class="fa fa-exclamation-triangle me-1"/>Invalid JSON - not applied</span>
+                <div class="ms-auto d-flex gap-2">
+                    <button t-if="state.mode === 'code' and !props.readonly" type="button" class="btn btn-sm btn-outline-secondary" t-on-click="formatCode">
+                        <i class="fa fa-align-left me-1"/>Format
+                    </button>
+                    <button type="button" class="btn btn-sm btn-outline-secondary" t-on-click="copy">
+                        <i t-attf-class="fa #{state.copied ? 'fa-check' : 'fa-copy'} me-1"/><t t-esc="state.copied ? 'Copied' : 'Copy JSON'"/>
+                    </button>
+                </div>
+            </div>
+            <div class="row g-3">
+                <div t-att-class="props.preview === 'form' ? 'col-xl-7' : 'col-12'">
+                    <t t-if="state.mode === 'visual'">
+                        <div class="o_grg_je_root">
+                            <GrgJsonNode value="data" depth="0" readonly="!!props.readonly" onChange.bind="onDataChange"/>
+                        </div>
+                    </t>
+                    <t t-else="">
+                        <textarea class="form-control o_grg_je_code" spellcheck="false" rows="22"
+                                  t-att-value="state.codeText" t-att-readonly="props.readonly" t-on-input="onCodeInput"/>
+                        <div t-if="state.error" class="text-danger small mt-1"><i class="fa fa-times-circle me-1"/><t t-esc="state.error"/></div>
+                    </t>
+                </div>
+                <div t-if="props.preview === 'form'" class="col-xl-5">
+                    <t t-set="form" t-value="previewForm"/>
+                    <div class="o_grg_je_preview card shadow-sm">
+                        <div class="card-header d-flex align-items-center">
+                            <i class="fa fa-mobile fa-lg me-2"/><strong>App preview</strong>
+                        </div>
+                        <div class="card-body">
+                            <h5 class="mb-3" t-esc="form.title || 'Untitled form'"/>
+                            <div t-if="!form.fields.length" class="text-muted small">Add items to form → fields to see them here.</div>
+                            <t t-foreach="form.fields" t-as="f" t-key="f_index">
+                                <div class="mb-3">
+                                    <label class="form-label fw-semibold mb-1">
+                                        <t t-esc="f.label || f.id || ('Field ' + (f_index + 1))"/>
+                                        <span t-if="f.required" class="text-danger"> *</span>
+                                        <span class="badge text-bg-light ms-1 fw-normal" t-esc="f.type || 'text'"/>
+                                    </label>
+                                    <input class="form-control" t-att-type="inputType(f.type)" t-att-value="f.value" t-att-placeholder="f.placeholder || ''" readonly="1"/>
+                                    <div t-if="f.helperText" class="form-text" t-esc="f.helperText"/>
+                                    <div class="text-muted o_grg_je_preview_id" t-if="f.id">id: <code t-esc="f.id"/></div>
+                                </div>
+                            </t>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </t>
+
+    <t t-name="grg_config.JsonNode">
+        <div t-if="isContainer" t-attf-class="o_grg_je_box o_grg_je_depth_#{props.depth % 4} #{props.depth === 0 ? 'o_grg_je_box_root' : ''}">
+            <div t-if="props.depth > 0" class="o_grg_je_head" t-on-click="toggle">
+                <i t-attf-class="fa fa-fw #{state.open ? 'fa-caret-down' : 'fa-caret-right'}"/>
+                <span t-if="props.isArrayItem" class="o_grg_je_index" t-esc="props.keyName + 1"/>
+                <input t-elif="props.keyName !== undefined" class="o_grg_je_keyinput o_grg_je_keyhead" t-att-value="props.keyName"
+                       t-att-readonly="props.readonly" title="Key name"
+                       t-on-click.stop="() => {}" t-on-change="(ev) => props.onRename and props.onRename(ev)"/>
+                <span class="o_grg_je_kind" t-esc="isArray ? '[ ]' : '{ }'"/>
+                <span t-if="summary" class="o_grg_je_summary" t-esc="summary"/>
+                <span class="text-muted small" t-esc="countLabel"/>
+                <div t-if="!props.readonly and props.onRemove" class="ms-auto o_grg_je_actions" t-on-click.stop="() => {}">
+                    <t t-if="props.isArrayItem">
+                        <button type="button" class="btn btn-link btn-sm p-1" title="Move up" t-on-click="() => props.onMove(-1)"><i class="fa fa-arrow-up"/></button>
+                        <button type="button" class="btn btn-link btn-sm p-1" title="Move down" t-on-click="() => props.onMove(1)"><i class="fa fa-arrow-down"/></button>
+                    </t>
+                    <button type="button" class="btn btn-link btn-sm p-1 text-danger" title="Remove" t-on-click="() => props.onRemove()"><i class="fa fa-trash"/></button>
+                </div>
+            </div>
+            <div t-if="state.open or props.depth === 0" class="o_grg_je_body">
+                <t t-foreach="entries" t-as="entry" t-key="isArray ? 'i' + entry[0] : 'k' + entry[0]">
+                    <div t-if="isContainerValue(entry[1])" class="o_grg_je_block">
+                        <GrgJsonNode value="entry[1]" depth="props.depth + 1" readonly="props.readonly"
+                                     onChange="(v) => this.setChild(entry[0], v)"
+                                     keyName="entry[0]" isArrayItem="isArray"
+                                     onRename="(ev) => this.renameChild(entry[0], ev)"
+                                     onRemove="() => this.removeChild(entry[0])"
+                                     onMove="(d) => this.moveChild(entry[0], d)"/>
+                    </div>
+                    <div t-else="" class="o_grg_je_row">
+                        <div class="o_grg_je_key">
+                            <span t-if="isArray" class="o_grg_je_index" t-esc="entry[0] + 1"/>
+                            <input t-else="" class="o_grg_je_keyinput" t-att-value="entry[0]" t-att-readonly="props.readonly"
+                                   t-on-change="(ev) => this.renameChild(entry[0], ev)" title="Key name"/>
+                        </div>
+                        <div class="o_grg_je_val">
+                            <GrgJsonNode value="entry[1]" depth="props.depth + 1" readonly="props.readonly"
+                                         onChange="(v) => this.setChild(entry[0], v)"/>
+                        </div>
+                        <div class="o_grg_je_actions" t-if="!props.readonly">
+                            <t t-if="isArray">
+                                <button type="button" class="btn btn-link btn-sm p-1" title="Move up" t-on-click="() => this.moveChild(entry[0], -1)"><i class="fa fa-arrow-up"/></button>
+                                <button type="button" class="btn btn-link btn-sm p-1" title="Move down" t-on-click="() => this.moveChild(entry[0], 1)"><i class="fa fa-arrow-down"/></button>
+                            </t>
+                            <button type="button" class="btn btn-link btn-sm p-1 text-danger" title="Remove" t-on-click="() => this.removeChild(entry[0])"><i class="fa fa-trash"/></button>
+                        </div>
+                    </div>
+                </t>
+                <div t-if="!entries.length" class="text-muted small fst-italic py-1">empty</div>
+                <div t-if="!props.readonly" class="o_grg_je_add d-flex flex-wrap align-items-center gap-2">
+                    <input t-if="!isArray" class="form-control form-control-sm o_grg_je_newkey" placeholder="new key" t-model="state.newKey"/>
+                    <select class="form-select form-select-sm o_grg_je_type" t-model="state.newType">
+                        <t t-foreach="TYPES" t-as="t" t-key="t"><option t-att-value="t" t-esc="t"/></t>
+                    </select>
+                    <button type="button" class="btn btn-sm btn-outline-primary" t-on-click="addChild">
+                        <i class="fa fa-plus me-1"/><t t-esc="isArray ? 'Add item' : 'Add key'"/>
+                    </button>
+                    <span t-if="state.keyError" class="text-danger small" t-esc="state.keyError"/>
+                </div>
+            </div>
+        </div>
+        <div t-else="" class="o_grg_je_prim d-flex align-items-center gap-2">
+            <t t-if="type === 'boolean'">
+                <div class="form-check form-switch mb-0">
+                    <input class="form-check-input" type="checkbox" t-att-checked="props.value" t-att-disabled="props.readonly"
+                           t-on-change="(ev) => props.onChange(ev.target.checked)"/>
+                </div>
+                <span class="o_grg_je_bool" t-esc="props.value ? 'true' : 'false'"/>
+            </t>
+            <input t-elif="type === 'number'" type="number" step="any" class="form-control form-control-sm o_grg_je_input"
+                   t-att-value="props.value" t-att-readonly="props.readonly" t-on-change="onNumber"/>
+            <span t-elif="type === 'null'" class="badge text-bg-light o_grg_je_null">null</span>
+            <input t-else="" type="text" class="form-control form-control-sm o_grg_je_input"
+                   t-att-value="props.value" t-att-readonly="props.readonly" t-on-input="onText"/>
+            <select t-if="!props.readonly" class="form-select form-select-sm o_grg_je_type" title="Value type" t-on-change="changeType">
+                <t t-foreach="TYPES" t-as="t" t-key="t"><option t-att-value="t" t-att-selected="t === type" t-esc="t"/></t>
+            </select>
+        </div>
+    </t>
+
+</templates>

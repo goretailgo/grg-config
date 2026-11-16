@@ -1,0 +1,38 @@
+<?xml version="1.0" encoding="utf-8"?>
+<odoo>
+    <record id="view_company_form_grg_po" model="ir.ui.view">
+        <field name="name">res.company.form.grg_config.po</field>
+        <field name="model">res.company</field>
+        <field name="inherit_id" ref="base.view_company_form"/>
+        <field name="priority">90</field>
+        <field name="arch" type="xml">
+            <xpath expr="//notebook" position="inside">
+                <page string="Configuration Object" name="grg_po_config">
+                    <div class="d-flex flex-wrap align-items-center gap-2 mb-2">
+                        <span class="text-muted">
+                            Returned to the PO app by <code>GET /grg/api/configure-user</code> for this company.
+                        </span>
+                        <button name="action_grg_reset_po_config" type="object" string="Reset to default"
+                                icon="fa-undo" class="btn-secondary btn-sm ms-auto"
+                                confirm="Replace this company's configuration with the default one?"/>
+                    </div>
+                    <group>
+                        <field name="grg_po_discount_from_pos"/>
+                    </group>
+                    <field name="grg_po_config" widget="grg_json_editor" nolabel="1" class="w-100"/>
+                </page>
+                <page string="Template" name="grg_po_template">
+                    <div class="d-flex flex-wrap align-items-center gap-2 mb-2">
+                        <span class="text-muted">
+                            Bill form returned to the PO app by <code>GET /grg/api/get-template</code> for this company.
+                        </span>
+                        <button name="action_grg_reset_po_template" type="object" string="Reset to default"
+                                icon="fa-undo" class="btn-secondary btn-sm ms-auto"
+                                confirm="Replace this company's template with the default one?"/>
+                    </div>
+                    <field name="grg_po_template" widget="grg_json_editor" options="{'preview': 'form'}" nolabel="1" class="w-100"/>
+                </page>
+            </xpath>
+        </field>
+    </record>
+</odoo>

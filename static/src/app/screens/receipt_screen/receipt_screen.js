@@ -11,11 +11,16 @@ patch(ReceiptScreen.prototype, {
     },
 
     async _quickUpiAutoPrint() {
-        const order = this.pos.getOrder();
-        if (!order?.uiState?.quickPayPending) {
-            return;
+        try {
+            const order = this.currentOrder || this.pos.getOrder();
+            if (!order?.uiState?.quickPayPending) {
+                return;
+            }
+            order.uiState.quickPayPending = false;
+            await this.pos.printReceipt({ order });
+        } catch (e) {
+            // Never crash the POS: cashier can still use the Print button
+            console.error("[grg_config] Quick UPI auto-print failed:", e);
         }
-        order.uiState.quickPayPending = false;
-        await this.pos.printReceipt({ order });
     },
 });
