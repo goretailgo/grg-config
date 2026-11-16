@@ -4,12 +4,15 @@
 Every method runs as the API-key user, in the company chosen by the controller,
 so Odoo access rights, record rules and multi-company rules all apply.
 """
+import json
 import math
 import re
+import time
+from datetime import datetime, timedelta
 
 from odoo import _, api, fields, models
 from odoo.exceptions import AccessError, MissingError, UserError
-from odoo.tools import SQL
+from odoo.tools import SQL, html_escape
 
 GSTIN_RE = re.compile(r'^[0-9A-Z]{15}$')
 DATE_RE = re.compile(r'^\d{4}-\d{2}-\d{2}$')
@@ -27,6 +30,11 @@ def _m2o(rec):
 
 def _dt(value):
     return fields.Datetime.to_string(value) if value else None
+
+
+def _n(x):
+    """2.0 -> 2 (n8n/JS returned whole numbers as ints)."""
+    return int(x) if isinstance(x, float) and x.is_integer() else x
 
 
 def _int(value, default):
@@ -415,4 +423,394 @@ class GrgPoApi(models.AbstractModel):
             'success': True,
             'company_id': company.id,
             'template': company.grg_get_po_template(),
+        }
+
+    # ------------------------------------------- bulk PO + products + variants
+    @api.model
+    def grg_save_po_variants(self, body):
+        """Port of the n8n 'AI Complete Workflow (variants) - BULK - v2' (parser-variants-v2).
+
+        No po_id  -> create a new PO (duplicate bill check first).
+        po_id     -> add products to that existing PO (same variant = qty increased).
+        Runs in one DB transaction: any error rolls everything back.
+        """
+        t0 = time.time()
+        body = body if isinstance(body, dict) else {}
+        company = self.env.company
+        env = self.with_context(tracking_disable=True, mail_create_nolog=True, mail_notrack=True).env
+        lc = lambda s: str(s).strip().lower()
+
+        def need(v, n):
+            if v is None or str(v).strip() == '':
+                raise UserError(_('%s is required', n))
+
+        def num(v, n):
+            try:
+                return float(v)
+            except (TypeError, ValueError):
+                raise UserError(_('%s must be a number', n))
+
+        # ---------------- mode + header fields
+        add_po_id = None
+        if body.get('po_id') not in (None, ''):
+            try:
+                add_po_id = int(str(body['po_id']).strip())
+            except ValueError:
+                add_po_id = 0
+            if add_po_id <= 0:
+                raise UserError(_('po_id must be a positive integer'))
+        mode = 'add' if add_po_id else 'create'
+
+        bill_number = str(body['bill_number']).strip() if body.get('bill_number') is not None else ''
+        bill_date = str(body.get('bill_date') or '').strip()
+        party_name = str(body.get('party_name') or '').strip()
+        if mode == 'create':
+            kind, party_key = self._grg_parse_party_key(body)
+            need(party_name, 'party_name')
+            need(bill_number, 'bill_number')
+            need(bill_date, 'bill_date')
+        if bill_date and not DATE_RE.match(bill_date):
+            raise UserError(_('bill_date must be in YYYY-MM-DD format e.g. 2026-04-10'))
+
+        notes = 'Bill Number - %s<br/>' % (body.get('bill_number') if body.get('bill_number') is not None else '')
+        transport = body.get('transport')
+        if isinstance(transport, dict) and transport:
+            notes += (
+                'Transport Name - %s<br/>Bill Date - %s<br/>Transport Builty Number - %s<br/>'
+                'Transport Fare - %s<br/>Parcel Quantity - %s<br/>' % (
+                    transport.get('name') or '', bill_date, transport.get('builty_number') or '',
+                    transport.get('fare') or '', transport.get('parcel_quantity') or ''))
+
+        raw_products = body.get('products')
+        if not isinstance(raw_products, list) or not raw_products:
+            raise UserError(_('products must be a non-empty array'))
+
+        # ---------------- normalise products / variants
+        products = []
+        for pi, p in enumerate(raw_products):
+            if not isinstance(p, dict):
+                raise UserError(_('products[%s] must be an object', pi))
+            need(p.get('product_name'), 'products[%s].product_name' % pi)
+            need(p.get('cost_price'), 'products[%s].cost_price' % pi)
+            top_cost = num(p['cost_price'], 'products[%s].cost_price' % pi)
+            top_sell = num(p['selling_price'], 'products[%s].selling_price' % pi) if p.get('selling_price') is not None else None
+            variants = p.get('variants') if isinstance(p.get('variants'), list) and p.get('variants') else None
+            if not variants:
+                if not p.get('quantity'):
+                    raise UserError(_("products[%s]: quantity is required (or provide a non-empty 'variants' array)", pi))
+                variants = [{'quantity': p['quantity'], 'attributes': []}]
+            norm = []
+            for vi, v in enumerate(variants):
+                v = v if isinstance(v, dict) else {}
+                qty = num(v.get('quantity') or 0, 'products[%s].variants[%s].quantity' % (pi, vi))
+                if qty <= 0:
+                    raise UserError(_('products[%s].variants[%s].quantity must be a positive number', pi, vi))
+                attrs = []
+                for ai, a in enumerate(v.get('attributes') if isinstance(v.get('attributes'), list) else []):
+                    a = a if isinstance(a, dict) else {}
+                    need(a.get('name'), 'products[%s].variants[%s].attributes[%s].name' % (pi, vi, ai))
+                    need(a.get('value'), 'products[%s].variants[%s].attributes[%s].value' % (pi, vi, ai))
+                    attrs.append({'name': str(a['name']).strip(), 'value': str(a['value']).strip()})
+                norm.append({
+                    'quantity': qty,
+                    'cost': num(v['cost_price'], 'cost_price') if v.get('cost_price') is not None else top_cost,
+                    'selling': num(v['selling_price'], 'selling_price') if v.get('selling_price') is not None else top_sell,
+                    'attributes': attrs,
+                })
+            products.append({
+                'name': str(p['product_name']).strip(),
+                'category_name': p.get('category_name'),
+                'pos_category_id': p.get('pos_category_id'),
+                'gst': float(p.get('gst_percent') or 5),
+                'hsn': p.get('hsn_code'),
+                'cost': top_cost,
+                'selling': top_sell,
+                'price_list': p.get('price_list'),
+                'variants': norm,
+                'has_attrs': any(v['attributes'] for v in norm),
+            })
+
+        # ---------------- duplicate bill (create) / target PO (add)
+        PO = env['purchase.order']
+        target_po = PO
+        if mode == 'create':
+            dups = PO.search([('partner_ref', '=ilike', bill_number), ('state', '!=', 'cancel'),
+                              ('company_id', '=', company.id)], order='id')
+            if dups:
+                return {
+                    '_status': 409,
+                    'success': False,
+                    'duplicate_bill': True,
+                    'error': 'Bill already exists: bill number "%s" is already used in %s' % (
+                        bill_number, ', '.join(dups.mapped('name'))),
+                    'bill_number': bill_number,
+                    'existing_po': [{
+                        'po_id': d.id, 'po_name': d.name, 'state': d.state,
+                        'partner_id': d.partner_id.id or None, 'partner_name': d.partner_id.display_name or None,
+                        'amount_total': d.amount_total,
+                    } for d in dups],
+                    'stats': {'duration_ms': int((time.time() - t0) * 1000)},
+                }
+        else:
+            target_po = PO.search([('id', '=', add_po_id), ('company_id', '=', company.id)], limit=1)
+            if not target_po:
+                raise MissingError(_('Purchase order %s not found', add_po_id))
+            if target_po.state in ('cancel', 'done'):
+                raise UserError(_("Purchase order %s is '%s'; products cannot be added", target_po.name, target_po.state))
+
+        try:
+            # ---------------- taxes per GST %
+            Tax = env['account.tax']
+            tax_by_gst = {}
+            for g in {p['gst'] for p in products}:
+                cands = Tax.search([('amount', '=', g), ('type_tax_use', '=', 'purchase'),
+                                    *Tax._check_company_domain(company)], order='sequence, id')
+                best = cands.filtered(lambda t: t.company_id == company)[:1] or cands[:1]
+                tax_by_gst[g] = best.id or False
+
+            # ---------------- partner
+            is_new_party = False
+            if mode == 'add':
+                partner = target_po.partner_id
+            else:
+                partner = self._grg_find_partner(kind, party_key)
+                if not partner:
+                    vals = {'name': party_name, 'company_type': 'company', 'supplier_rank': 1,
+                            'country_id': company.country_id.id or False}
+                    vals['vat' if kind == 'gst' else 'phone'] = party_key
+                    partner = env['res.partner'].create(vals)
+                    is_new_party = True
+
+            # ---------------- attributes + values (find or create)
+            Attr = env['product.attribute']
+            AttrVal = env['product.attribute.value']
+            attr_names = list(dict.fromkeys(a['name'] for p in products for v in p['variants'] for a in v['attributes']))
+            attr_by_name = {}
+            for a in Attr.search([('name', 'in', attr_names)], order='id') if attr_names else Attr:
+                attr_by_name.setdefault(a.name, a)
+            for n in attr_names:
+                if n not in attr_by_name:
+                    attr_by_name[n] = Attr.create({'name': n, 'create_variant': 'always'})
+            val_by_key = {}
+            wanted = {}
+            for p in products:
+                for v in p['variants']:
+                    for a in v['attributes']:
+                        wanted[(attr_by_name[a['name']].id, a['value'])] = True
+            if wanted:
+                found = AttrVal.search([('attribute_id', 'in', list({k[0] for k in wanted})),
+                                        ('name', 'in', list({k[1] for k in wanted}))], order='id')
+                for f in found:
+                    val_by_key.setdefault((f.attribute_id.id, f.name), f)
+                for (aid, name) in wanted:
+                    if (aid, name) not in val_by_key:
+                        val_by_key[(aid, name)] = AttrVal.create({'attribute_id': aid, 'name': name})
+            for p in products:
+                for v in p['variants']:
+                    v['attr_ids'] = [attr_by_name[a['name']].id for a in v['attributes']]
+                    v['value_ids'] = [val_by_key[(attr_by_name[a['name']].id, a['value'])].id for a in v['attributes']]
+
+            # ---------------- templates: create new / extend existing
+            Tmpl = env['product.template']
+            names = list(dict.fromkeys(p['name'] for p in products))
+            tmpl_by_name = {}
+            for t in Tmpl.search([('name', 'in', names)], order='id'):
+                tmpl_by_name.setdefault(t.name, t)
+            groups = {}
+            for p in products:
+                groups.setdefault(p['name'], []).append(p)
+
+            def needed_lines(plist):
+                m = {}
+                for p in plist:
+                    for v in p['variants']:
+                        for aid, vid in zip(v['attr_ids'], v['value_ids']):
+                            m.setdefault(aid, [])
+                            if vid not in m[aid]:
+                                m[aid].append(vid)
+                return m
+
+            categories = env['pos.category'].search([])
+
+            def resolve_category(p):
+                if p['category_name']:
+                    m = categories.filtered(lambda c: lc(c.name) == lc(p['category_name']))[:1]
+                    if m:
+                        return m.id
+                if p['pos_category_id']:
+                    m = categories.filtered(lambda c: str(c.id) == str(p['pos_category_id']).strip())[:1]
+                    if m:
+                        return m.id
+                raise UserError(_(
+                    "Category not found for \"%(name)s\". Pass 'category_name' or valid 'pos_category_id'. Available: [%(cats)s]",
+                    name=p['name'], cats=', '.join('%s: %s' % (c.id, c.name) for c in categories)))
+
+            tmpl_meta = {}
+            for name, plist in groups.items():
+                if name in tmpl_by_name:
+                    t = tmpl_by_name[name]
+                    tmpl_meta[name] = {'tmpl': t, 'is_new': False}
+                    cmds = []
+                    for aid, vids in needed_lines(plist).items():
+                        line = t.attribute_line_ids.filtered(lambda l: l.attribute_id.id == aid)[:1]
+                        if not line:
+                            cmds.append((0, 0, {'attribute_id': aid, 'value_ids': [(6, 0, vids)]}))
+                        else:
+                            add = [x for x in vids if x not in line.value_ids.ids]
+                            if add:
+                                cmds.append((1, line.id, {'value_ids': [(4, x) for x in add]}))
+                    if cmds:
+                        t.write({'attribute_line_ids': cmds})
+                    if not t.sale_ok:
+                        t.sale_ok = True
+                    continue
+                p = plist[0]
+                vals = {
+                    'name': name,
+                    'type': 'consu',
+                    'is_storable': True,
+                    'purchase_ok': True,
+                    'sale_ok': True,
+                    'available_in_pos': True,
+                    'company_id': company.id,
+                    'standard_price': p['cost'],
+                    'pos_categ_ids': [(6, 0, [resolve_category(p)])],
+                    'description': '<pre>%s</pre>' % html_escape(json.dumps(p['price_list'], indent=2, ensure_ascii=False)),
+                    'tracking': 'none',
+                    'attribute_line_ids': [(0, 0, {'attribute_id': aid, 'value_ids': [(6, 0, vids)]})
+                                           for aid, vids in needed_lines(plist).items()],
+                }
+                if p['selling'] is not None:
+                    vals['list_price'] = p['selling']
+                if p['hsn'] not in (None, '') and 'l10n_in_hsn_code' in Tmpl._fields:
+                    vals['l10n_in_hsn_code'] = str(p['hsn'])
+                tmpl_meta[name] = {'tmpl': Tmpl.create(vals), 'is_new': True}
+
+            # ---------------- match requested variants
+            for p in products:
+                t = tmpl_meta[p['name']]['tmpl']
+                cands = t.with_context(active_test=True).product_variant_ids
+                if not cands:
+                    raise UserError(_('No product.product for template %s (%s)', t.id, p['name']))
+                ptav_by_val = {x.product_attribute_value_id.id: x for x in t.attribute_line_ids.product_template_value_ids}
+                for v in p['variants']:
+                    v['ptav_by_val'] = ptav_by_val
+                    if not v['value_ids']:
+                        v['variant'] = cands[0]
+                        continue
+                    want = [ptav_by_val.get(x) for x in v['value_ids']]
+                    match = None
+                    if all(want):
+                        want_ids = sorted(x.id for x in want)
+                        match = next((c for c in cands if sorted(c.product_template_attribute_value_ids.ids) == want_ids), None)
+                    if not match:
+                        raise UserError(
+                            'Variant not found for "%s" (template %s) with [%s]. Template may have extra attribute '
+                            'lines not sent in the request.' % (
+                                p['name'], t.id, ', '.join('%s=%s' % (a['name'], a['value']) for a in v['attributes'])))
+                    v['variant'] = match
+
+            # ---------------- variant barcode / cost + Size price_extra
+            for p in products:
+                touch = p['has_attrs'] or tmpl_meta[p['name']]['is_new']
+                for v in p['variants']:
+                    var = v['variant']
+                    v['barcode'] = var.barcode or None
+                    if touch:
+                        bc = '3000000000000' + str(var.id)
+                        vals = {'standard_price': v['cost']}
+                        if var.barcode != bc:
+                            vals['barcode'] = bc
+                        var.write(vals)
+                        v['barcode'] = bc
+                    for a, val_id in zip(v['attributes'], v['value_ids']):
+                        if lc(a['name']) != 'size':
+                            continue
+                        ptav = v['ptav_by_val'].get(val_id)
+                        base, sell = p['selling'], v['selling']
+                        extra = 0 if base is None or sell is None else sell - base
+                        if ptav and ptav.price_extra != extra:
+                            ptav.price_extra = extra
+
+            # ---------------- PO lines (same variant aggregated)
+            date_planned = fields.Datetime.to_string(
+                datetime.combine(fields.Date.context_today(self) + timedelta(days=1), datetime.min.time()))
+            line_by_variant = {}
+            for p in products:
+                for v in p['variants']:
+                    vid = v['variant'].id
+                    tax_id = tax_by_gst.get(p['gst'])
+                    prev = line_by_variant.get(vid)
+                    line_by_variant[vid] = {
+                        'product_id': vid,
+                        'product_qty': (prev['product_qty'] if prev else 0) + v['quantity'],
+                        'price_unit': v['cost'],
+                        'date_planned': date_planned,
+                        'tax_ids': [(6, 0, [tax_id])] if tax_id else [(6, 0, [])],
+                    }
+            lines_added = lines_updated = 0
+            if mode == 'create':
+                po = PO.create({
+                    'partner_id': partner.id,
+                    'partner_ref': str(body.get('bill_number')),
+                    'note': notes,
+                    'company_id': company.id,
+                    'order_line': [(0, 0, l) for l in line_by_variant.values()],
+                })
+                lines_added = len(line_by_variant)
+            else:
+                po = target_po
+                existing = {}
+                for l in po.order_line.filtered(lambda l: not l.display_type).sorted('id'):
+                    if l.product_id and l.product_id.id not in existing:
+                        existing[l.product_id.id] = l
+                cmds = []
+                for l in line_by_variant.values():
+                    ex = existing.get(l['product_id'])
+                    if ex:
+                        cmds.append((1, ex.id, {'product_qty': ex.product_qty + l['product_qty']}))
+                        lines_updated += 1
+                    else:
+                        cmds.append((0, 0, l))
+                        lines_added += 1
+                po.write({'order_line': cmds})
+        except AccessError as e:
+            raise AccessError(_(
+                "%(err)s\n\nThis API creates products, variants, attributes and vendors: give the API-key user "
+                "the 'Products / Create' and 'Contact Creation' rights (or Inventory / Administrator).", err=e.args[0]))
+
+        line_id_by_variant = {}
+        for l in po.order_line.sorted('id'):
+            if l.product_id and l.product_id.id not in line_id_by_variant:
+                line_id_by_variant[l.product_id.id] = l.id
+
+        return {
+            'success': True,
+            'mode': mode,
+            'po_id': po.id,
+            'po_name': po.name,
+            'amount_total': po.amount_total,
+            'partner_id': partner.id,
+            'partner_name': partner.display_name if mode == 'add' else (party_name if is_new_party else partner.name),
+            'is_new_party': is_new_party,
+            'bill_number': (target_po.partner_ref or None) if mode == 'add' else body.get('bill_number'),
+            'lines_added': lines_added,
+            'lines_updated': lines_updated,
+            'products': [{
+                'product_name': p['name'],
+                'product_tmpl_id': tmpl_meta[p['name']]['tmpl'].id,
+                'is_new_template': tmpl_meta[p['name']]['is_new'],
+                'variants': [{
+                    'variant_id': v['variant'].id,
+                    'barcode': v['barcode'],
+                    'attributes': v['attributes'],
+                    'quantity': _n(v['quantity']),
+                    'cost_price': _n(v['cost']),
+                    'selling_price': _n(v['selling']),
+                    'po_line_id': line_id_by_variant.get(v['variant'].id),
+                } for v in p['variants']],
+            } for p in products],
+            'stats': {'duration_ms': int((time.time() - t0) * 1000)},
+            'message': ('PO %s updated: %s line(s) added, %s line(s) quantity increased.' % (po.name, lines_added, lines_updated))
+            if mode == 'add' else ('PO %s created with %s line(s).' % (po.name, len(line_by_variant))),
         }

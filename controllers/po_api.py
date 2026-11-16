@@ -85,7 +85,9 @@ class GrgPoApiController(http.Controller):
         try:
             body = self._json_body() if with_body else None
             api = self._api_env(body if company_from_body else None)
-            return self._json(fn(api, body))
+            result = fn(api, body)
+            status = result.pop('_status', 200) if isinstance(result, dict) else 200
+            return self._json(result, status=status)
         except AuthFailed as e:
             return self._auth_failed(str(e))
         except AccessDenied:
@@ -149,3 +151,8 @@ class GrgPoApiController(http.Controller):
     @http.route(BASE + '/get-template', methods=['GET'], **ROUTE)
     def get_template(self, **kw):
         return self._run(lambda api, body: api.grg_get_template())
+
+    # Bulk save: PO + products + variants (n8n parser-variants-v2). Top-level po_id = add to that PO.
+    @http.route(BASE + '/parser-variants-v2', methods=['POST'], **ROUTE)
+    def parser_variants_v2(self, **kw):
+        return self._run(lambda api, body: api.grg_save_po_variants(body), with_body=True)
