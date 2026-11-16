@@ -18,6 +18,7 @@
             'grg_config/static/src/json_editor/json_editor.scss',
         ],
         'point_of_sale._assets_pos': [
+            'grg_config/static/src/app/reload_guard/reload_guard.js',
             'grg_config/static/src/css/brand_theme.css',
             'grg_config/static/src/js/theme_toggle.js',
             'grg_config/static/src/app/screens/product_screen/action_pad/action_pad.js',
