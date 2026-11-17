@@ -156,3 +156,10 @@ class GrgPoApiController(http.Controller):
     @http.route(BASE + '/parser-variants-v2', methods=['POST'], **ROUTE)
     def parser_variants_v2(self, **kw):
         return self._run(lambda api, body: api.grg_save_po_variants(body), with_body=True)
+
+    # Product autosuggest: ?q=kurti&limit=10[&strict=1&with_variants=1]  (company via X-Company-Id / company_id)
+    @http.route(BASE + '/product-suggest', methods=['GET'], **ROUTE)
+    def product_suggest(self, q='', limit=10, strict=None, with_variants=None, **kw):
+        truthy = lambda v: str(v or '').lower() in ('1', 'true', 'yes')
+        return self._run(lambda api, body: api.grg_product_suggest(
+            q=q, limit=limit, strict=truthy(strict), with_variants=truthy(with_variants)))

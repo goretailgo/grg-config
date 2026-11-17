@@ -4,6 +4,7 @@
 Every method runs as the API-key user, in the company chosen by the controller,
 so Odoo access rights, record rules and multi-company rules all apply.
 """
+import html
 import json
 import math
 import re
@@ -813,4 +814,115 @@ class GrgPoApi(models.AbstractModel):
             'stats': {'duration_ms': int((time.time() - t0) * 1000)},
             'message': ('PO %s updated: %s line(s) added, %s line(s) quantity increased.' % (po.name, lines_added, lines_updated))
             if mode == 'add' else ('PO %s created with %s line(s).' % (po.name, len(line_by_variant))),
+        }
+
+    # ------------------------------------------------------ product autosuggest
+    @api.model
+    def grg_product_suggest(self, q='', limit=10, strict=False, with_variants=False):
+        """Fast product autosuggest for the PO app, scoped to the selected company.
+
+        Match order: exact barcode / internal reference (variant) -> name starts with -> name contains
+        (every word must match). strict=True: only products owned by the company (excludes shared ones).
+        Field names match the parser-variants-v2 request so the app can pre-fill from a suggestion.
+        """
+        t0 = time.time()
+        company = self.env.company
+        limit = min(max(_int(limit, 10), 1), 50)
+        q = re.sub(r'\s+', ' ', str(q or '')).strip()
+        Tmpl = self.env['product.template'].with_context(active_test=True)
+        scope = [('company_id', '=', company.id)] if strict else []
+
+        found, matched_by = [], {}
+
+        def take(records, how):
+            for r in records:
+                if r.id not in matched_by and len(found) < limit:
+                    found.append(r)
+                    matched_by[r.id] = how
+
+        if not q:
+            take(Tmpl.search(scope, limit=limit, order='id desc'), 'recent')
+        else:
+            # 1) exact barcode / internal reference on variants (indexed)
+            Prod = self.env['product.product']
+            prods = Prod.search(scope + ['|', ('barcode', '=', q), ('default_code', '=ilike', q)], limit=limit)
+            take(prods.product_tmpl_id, 'barcode_or_code')
+            # 2) name starts with q
+            if len(found) < limit:
+                take(Tmpl.search(scope + [('name', '=ilike', q.replace('%', r'\%').replace('_', r'\_') + '%'),
+                                          ('id', 'not in', list(matched_by))],
+                                 limit=limit - len(found), order='name, id'), 'name_prefix')
+            # 3) every word contained in name (trigram index), or reference starts with q
+            if len(found) < limit:
+                words = [w for w in q.split(' ') if w]
+                dom = scope + [('id', 'not in', list(matched_by))]
+                name_dom = [('name', 'ilike', w) for w in words]
+                dom += ['|', ('default_code', '=ilike', q + '%')] + (['&'] * (len(name_dom) - 1)) + name_dom
+                take(Tmpl.search(dom, limit=limit - len(found), order='name, id'), 'contains')
+
+        tmpls = Tmpl.browse([t.id for t in found])
+        # prefetch everything we read in a few batched queries
+        tmpls.fetch(['name', 'default_code', 'list_price', 'standard_price', 'categ_id', 'pos_categ_ids',
+                     'uom_id', 'company_id', 'supplier_taxes_id', 'description', 'attribute_line_ids',
+                     'product_variant_ids']
+                    + (['l10n_in_hsn_code'] if 'l10n_in_hsn_code' in Tmpl._fields else []))
+        has_hsn = 'l10n_in_hsn_code' in Tmpl._fields
+
+        def price_list(desc):
+            if not desc:
+                return None
+            m = re.search(r'<pre>(.*?)</pre>', str(desc), re.S)
+            if not m:
+                return None
+            try:
+                return json.loads(html.unescape(m.group(1)))
+            except ValueError:
+                return None
+
+        out = []
+        for t in tmpls:
+            variants = t.product_variant_ids
+            taxes = t.supplier_taxes_id._filter_taxes_by_company(company)
+            pos_cat = t.pos_categ_ids[:1]
+            item = {
+                'product_tmpl_id': t.id,
+                'product_name': t.name,
+                'internal_reference': t.default_code or None,
+                'barcode': variants[:1].barcode or None if len(variants) == 1 else None,
+                # template cost is 0 when it has several variants -> use the first variant's cost
+                'cost_price': _n(t.standard_price if len(variants) <= 1 else variants[:1].standard_price),
+                'selling_price': _n(t.list_price),
+                'gst_percent': _n(taxes[:1].amount) if taxes else None,
+                'hsn_code': (t.l10n_in_hsn_code or None) if has_hsn else None,
+                'category_name': pos_cat.name or None,
+                'pos_category_id': pos_cat.id or None,
+                'product_category': t.categ_id.name or None,
+                'uom': t.uom_id.name or None,
+                'company_id': t.company_id.id or None,
+                'company_name': t.company_id.name or None,
+                'variant_count': len(variants),
+                'attributes': [{'name': l.attribute_id.name, 'values': l.value_ids.mapped('name')}
+                               for l in t.attribute_line_ids],
+                'price_list': price_list(t.description),
+                'matched_by': matched_by[t.id],
+            }
+            if with_variants:
+                item['variants'] = [{
+                    'variant_id': v.id,
+                    'barcode': v.barcode or None,
+                    'internal_reference': v.default_code or None,
+                    'attributes': [{'name': ptav.attribute_id.name, 'value': ptav.name}
+                                   for ptav in v.product_template_attribute_value_ids],
+                    'cost_price': _n(v.standard_price),
+                    'selling_price': _n(v.lst_price),
+                } for v in variants]
+            out.append(item)
+        return {
+            'success': True,
+            'query': q,
+            'company_id': company.id,
+            'strict': bool(strict),
+            'count': len(out),
+            'products': out,
+            'stats': {'duration_ms': int((time.time() - t0) * 1000)},
         }
