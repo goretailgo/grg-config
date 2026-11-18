@@ -461,6 +461,9 @@ class GrgPoApi(models.AbstractModel):
             if add_po_id <= 0:
                 raise UserError(_('po_id must be a positive integer'))
         mode = 'add' if add_po_id else 'create'
+        # body {"mode": "upsert"}: an existing DRAFT PO with the same bill number is overwritten instead of 409
+        upsert = mode == 'create' and str(body.get('mode') or '').strip().lower() == 'upsert'
+        upsert_po = None
 
         bill_number = str(body['bill_number']).strip() if body.get('bill_number') is not None else ''
         bill_date = str(body.get('bill_date') or '').strip()
@@ -537,13 +540,24 @@ class GrgPoApi(models.AbstractModel):
         if mode == 'create':
             dups = PO.search([('partner_ref', '=ilike', bill_number), ('state', '!=', 'cancel'),
                               ('company_id', '=', company.id)], order='id')
-            if dups:
+            blocked = None
+            if dups and upsert:
+                if len(dups) > 1:
+                    blocked = 'bill number is used in more than one purchase order'
+                elif dups.state != 'draft':
+                    blocked = "existing purchase order %s is in state '%s'; only draft orders can be upserted" % (
+                        dups.name, dups.state)
+                else:
+                    upsert_po = dups
+            if dups and not upsert_po:
                 return {
                     '_status': 409,
                     'success': False,
                     'duplicate_bill': True,
-                    'error': 'Bill already exists: bill number "%s" is already used in %s' % (
-                        bill_number, ', '.join(dups.mapped('name'))),
+                    **({'upsert_blocked': blocked} if upsert else {}),
+                    'error': 'Bill already exists: bill number "%s" is already used in %s%s' % (
+                        bill_number, ', '.join(dups.mapped('name')),
+                        ('. Upsert not possible: %s' % blocked) if upsert else ''),
                     'bill_number': bill_number,
                     'existing_po': [{
                         'po_id': d.id, 'po_name': d.name, 'state': d.state,
@@ -749,8 +763,19 @@ class GrgPoApi(models.AbstractModel):
                         'date_planned': date_planned,
                         'tax_ids': [(6, 0, [tax_id])] if tax_id else [(6, 0, [])],
                     }
-            lines_added = lines_updated = 0
-            if mode == 'create':
+            lines_added = lines_updated = lines_removed = 0
+            if upsert_po:
+                # overwrite the draft PO: header from the request, lines replaced by the request lines
+                lines_removed = len(upsert_po.order_line.filtered(lambda l: not l.display_type))
+                upsert_po.write({
+                    'partner_id': partner.id,
+                    'partner_ref': str(body.get('bill_number')),
+                    'note': notes,
+                    'order_line': [(5, 0, 0)] + [(0, 0, l) for l in line_by_variant.values()],
+                })
+                po = upsert_po
+                lines_added = len(line_by_variant)
+            elif mode == 'create':
                 po = PO.create({
                     'partner_id': partner.id,
                     'partner_ref': str(body.get('bill_number')),
@@ -787,7 +812,8 @@ class GrgPoApi(models.AbstractModel):
 
         return {
             'success': True,
-            'mode': mode,
+            'mode': 'upsert' if upsert else mode,
+            **({'upsert_action': 'updated' if upsert_po else 'inserted', 'lines_removed': lines_removed} if upsert else {}),
             'po_id': po.id,
             'po_name': po.name,
             'amount_total': po.amount_total,
@@ -813,7 +839,9 @@ class GrgPoApi(models.AbstractModel):
             } for p in products],
             'stats': {'duration_ms': int((time.time() - t0) * 1000)},
             'message': ('PO %s updated: %s line(s) added, %s line(s) quantity increased.' % (po.name, lines_added, lines_updated))
-            if mode == 'add' else ('PO %s created with %s line(s).' % (po.name, len(line_by_variant))),
+            if mode == 'add' else
+            ('PO %s upserted: %s old line(s) replaced with %s line(s).' % (po.name, lines_removed, lines_added))
+            if upsert_po else ('PO %s created with %s line(s).' % (po.name, len(line_by_variant))),
         }
 
     # ------------------------------------------------------ product autosuggest
