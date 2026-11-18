@@ -163,3 +163,11 @@ class GrgPoApiController(http.Controller):
         truthy = lambda v: str(v or '').lower() in ('1', 'true', 'yes')
         return self._run(lambda api, body: api.grg_product_suggest(
             q=q, limit=limit, strict=truthy(strict), with_variants=truthy(with_variants)))
+
+    # Confirm PO: draft/sent -> purchase. Body {"po_id": 16} (or POST /grg/api/po/16/confirm)
+    @http.route([BASE + '/confirm-po', BASE + '/po/<int:po_id>/confirm'], methods=['POST'], **ROUTE)
+    def confirm_po(self, po_id=None, **kw):
+        def go(api, body):
+            body = body if isinstance(body, dict) else {}
+            return api.grg_confirm_po(po_id or body.get('po_id') or kw.get('po_id'))
+        return self._run(go, with_body=True)

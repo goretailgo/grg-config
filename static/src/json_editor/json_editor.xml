@@ -44,23 +44,59 @@
                         </div>
                         <div class="card-body">
                             <h5 class="mb-3" t-esc="form.title || 'Untitled form'"/>
-                            <div t-if="!form.fields.length" class="text-muted small">Add items to form → fields to see them here.</div>
-                            <t t-foreach="form.fields" t-as="f" t-key="f_index">
-                                <div class="mb-3">
-                                    <label class="form-label fw-semibold mb-1">
-                                        <t t-esc="f.label || f.id || ('Field ' + (f_index + 1))"/>
-                                        <span t-if="f.required" class="text-danger"> *</span>
-                                        <span class="badge text-bg-light ms-1 fw-normal" t-esc="f.type || 'text'"/>
-                                    </label>
-                                    <input class="form-control" t-att-type="inputType(f.type)" t-att-value="f.value" t-att-placeholder="f.placeholder || ''" readonly="1"/>
-                                    <div t-if="f.helperText" class="form-text" t-esc="f.helperText"/>
-                                    <div class="text-muted o_grg_je_preview_id" t-if="f.id">id: <code t-esc="f.id"/></div>
-                                </div>
+                            <div t-if="!form.fields.length and !form.products" class="text-muted small">Add items to form → fields to see them here.</div>
+                            <t t-foreach="form.fields" t-as="f" t-key="'h' + f_index">
+                                <t t-call="grg_config.JsonPreviewField"/>
                             </t>
+                            <t t-set="sec" t-value="form.products"/>
+                            <div t-if="form.products" class="o_grg_je_pv_section">
+                                <div class="o_grg_je_pv_head">
+                                    <i class="fa fa-cubes me-1"/><t t-esc="sec.title || 'Products'"/>
+                                    <span t-if="sec.repeatable" class="badge text-bg-light ms-2"><i class="fa fa-clone me-1"/>repeatable</span>
+                                </div>
+                                <t t-foreach="sec.fields" t-as="f" t-key="'p' + f_index">
+                                    <t t-call="grg_config.JsonPreviewField"/>
+                                </t>
+                                <t t-set="vsec" t-value="sec.variants"/>
+                                <div t-if="sec.variants" class="o_grg_je_pv_section o_grg_je_pv_variants">
+                                    <div class="o_grg_je_pv_head">
+                                        <i class="fa fa-th-large me-1"/><t t-esc="vsec.title || 'Variants'"/>
+                                        <span t-if="vsec.repeatable" class="badge text-bg-light ms-2"><i class="fa fa-clone me-1"/>repeatable</span>
+                                    </div>
+                                    <div t-if="vsec.attributes.length" class="row g-2 mb-1">
+                                        <t t-foreach="vsec.attributes" t-as="f" t-key="'a' + f_index">
+                                            <div class="col-6"><t t-call="grg_config.JsonPreviewField"/></div>
+                                        </t>
+                                    </div>
+                                    <t t-foreach="vsec.fields" t-as="f" t-key="'v' + f_index">
+                                        <t t-call="grg_config.JsonPreviewField"/>
+                                    </t>
+                                    <button t-if="vsec.repeatable" type="button" class="btn btn-sm btn-outline-secondary w-100" disabled="1"><i class="fa fa-plus me-1"/>Add variant</button>
+                                </div>
+                                <button t-if="sec.repeatable" type="button" class="btn btn-sm btn-outline-secondary w-100 mt-2" disabled="1"><i class="fa fa-plus me-1"/>Add product</button>
+                            </div>
                         </div>
                     </div>
                 </div>
             </div>
+        </div>
+    </t>
+
+    <t t-name="grg_config.JsonPreviewField">
+        <div class="mb-3">
+            <label class="form-label fw-semibold mb-1">
+                <t t-esc="f.label || f.name || f.id || 'Field'"/>
+                <span t-if="f.required" class="text-danger"> *</span>
+                <span class="badge text-bg-light ms-1 fw-normal" t-esc="f.type || 'text'"/>
+            </label>
+            <select t-if="f.type === 'select'" class="form-select" disabled="1">
+                <t t-foreach="fieldOptions(f)" t-as="o" t-key="o_index">
+                    <option t-att-selected="isSelected(o, f.value)" t-esc="o"/>
+                </t>
+            </select>
+            <input t-else="" class="form-control" t-att-type="inputType(f.type)" t-att-value="f.value" t-att-placeholder="f.placeholder || ''" readonly="1"/>
+            <div t-if="f.helperText" class="form-text" t-esc="f.helperText"/>
+            <div class="text-muted o_grg_je_preview_id" t-if="f.id or f.name"><t t-esc="f.name and !f.id ? 'attribute: ' : 'id: '"/><code t-esc="f.id || f.name"/></div>
         </div>
     </t>
 

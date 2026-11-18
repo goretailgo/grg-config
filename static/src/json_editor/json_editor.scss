@@ -89,6 +89,17 @@
         top: 8px;
         border-radius: 12px;
         .card-header { background: #042F4F; color: #fff; border-radius: 12px 12px 0 0; }
+        .card-body { max-height: calc(100vh - 140px); overflow-y: auto; }
         .o_grg_je_preview_id { font-size: 0.7rem; }
+        .o_grg_je_pv_section {
+            border: 1px solid $border-color;
+            border-left: 4px solid #F4701B;
+            border-radius: 8px;
+            padding: 10px 12px;
+            margin-top: 8px;
+            background: rgba(0, 0, 0, 0.012);
+        }
+        .o_grg_je_pv_variants { border-left-color: #2E9C6A; }
+        .o_grg_je_pv_head { font-weight: 600; margin-bottom: 10px; color: #042F4F; }
     }
 }

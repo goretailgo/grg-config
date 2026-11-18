@@ -25,21 +25,21 @@ DEFAULT_PO_TEMPLATE = {
                 "label": "Party Bill Number",
                 "type": "text",
                 "required": True,
-                "value": "TI-02036",
+                "value": "TI-02036"
             },
             {
                 "id": "bill_date",
                 "label": "Bill Date",
                 "type": "date",
                 "required": True,
-                "value": "2026-05-09",
+                "value": "2026-05-09"
             },
             {
                 "id": "party_name",
                 "label": "Party Name",
                 "type": "text",
                 "required": True,
-                "value": "ZOYA FASHION",
+                "value": "ZOYA FASHION"
             },
             {
                 "id": "mobile_or_gst",
@@ -47,10 +47,115 @@ DEFAULT_PO_TEMPLATE = {
                 "type": "text",
                 "required": True,
                 "value": "36CSZPS3344A3ZB",
-                "helperText": "Enter mobile number OR GST number — either one is accepted.",
-            },
+                "helperText": "Enter mobile number OR GST number — either one is accepted."
+            }
         ],
-    },
+        "products": {
+            "title": "Products",
+            "repeatable": True,
+            "fields": [
+                {
+                    "id": "product_name",
+                    "label": "Product Name",
+                    "type": "text",
+                    "required": True,
+                    "value": "Cotton Kurti",
+                    "helperText": "Start typing to pick an existing product."
+                },
+                {
+                    "id": "category_name",
+                    "label": "Category",
+                    "type": "text",
+                    "required": True,
+                    "value": "Shirts"
+                },
+                {
+                    "id": "hsn_code",
+                    "label": "HSN Code",
+                    "type": "text",
+                    "required": False,
+                    "value": "6204"
+                },
+                {
+                    "id": "gst_percent",
+                    "label": "GST %",
+                    "type": "select",
+                    "required": True,
+                    "options": [
+                        5,
+                        12,
+                        18,
+                        28
+                    ],
+                    "value": 5
+                },
+                {
+                    "id": "cost_price",
+                    "label": "Cost Price",
+                    "type": "number",
+                    "required": True,
+                    "value": 300
+                },
+                {
+                    "id": "selling_price",
+                    "label": "Selling Price",
+                    "type": "number",
+                    "required": False,
+                    "value": 799
+                }
+            ],
+            "variants": {
+                "title": "Variants",
+                "repeatable": True,
+                "attributes": [
+                    {
+                        "name": "Size",
+                        "label": "Size",
+                        "type": "select",
+                        "required": True,
+                        "options": [
+                            "S",
+                            "M",
+                            "L",
+                            "XL",
+                            "XXL"
+                        ],
+                        "value": "M"
+                    },
+                    {
+                        "name": "Colour",
+                        "label": "Colour",
+                        "type": "text",
+                        "required": False,
+                        "value": "Red"
+                    }
+                ],
+                "fields": [
+                    {
+                        "id": "quantity",
+                        "label": "Quantity",
+                        "type": "number",
+                        "required": True,
+                        "value": 2
+                    },
+                    {
+                        "id": "cost_price",
+                        "label": "Variant Cost Price",
+                        "type": "number",
+                        "required": False,
+                        "helperText": "Leave empty to use the product cost price."
+                    },
+                    {
+                        "id": "selling_price",
+                        "label": "Variant Selling Price",
+                        "type": "number",
+                        "required": False,
+                        "helperText": "Leave empty to use the product selling price."
+                    }
+                ]
+            }
+        }
+    }
 }
 
 

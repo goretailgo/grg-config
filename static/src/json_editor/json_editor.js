@@ -253,13 +253,29 @@ export class GrgJsonEditor extends Component {
     }
     get previewForm() {
         const form = this.data.form;
-        if (!form || typeof form !== "object") {
-            return { title: "", fields: [] };
-        }
-        return {
-            title: form.title || "",
-            fields: Array.isArray(form.fields) ? form.fields.filter((f) => f && typeof f === "object") : [],
+        const list = (x) => (Array.isArray(x) ? x.filter((f) => f && typeof f === "object") : []);
+        const section = (sec) => {
+            if (!sec || typeof sec !== "object" || Array.isArray(sec)) {
+                return null;
+            }
+            return {
+                title: sec.title || "",
+                repeatable: !!sec.repeatable,
+                attributes: list(sec.attributes),
+                fields: list(sec.fields),
+                variants: section(sec.variants),
+            };
         };
+        if (!form || typeof form !== "object") {
+            return { title: "", fields: [], products: null };
+        }
+        return { title: form.title || "", fields: list(form.fields), products: section(form.products) };
+    }
+    isSelected(o, v) {
+        return `${o}` === `${v}`;
+    }
+    fieldOptions(f) {
+        return Array.isArray(f.options) ? f.options.map((o) => (o && typeof o === "object" ? o.label ?? o.value : o)) : [];
     }
     inputType(t) {
         return ["date", "number", "email", "tel", "datetime-local", "time"].includes(t) ? t : "text";

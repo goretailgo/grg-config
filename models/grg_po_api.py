@@ -926,3 +926,43 @@ class GrgPoApi(models.AbstractModel):
             'products': out,
             'stats': {'duration_ms': int((time.time() - t0) * 1000)},
         }
+
+    # ------------------------------------------------------------ confirm PO
+    @api.model
+    def grg_confirm_po(self, po_id):
+        """Draft/sent PO -> confirmed (Odoo 'Confirm Order'). Idempotent: an already confirmed PO returns success."""
+        po_id = _int(po_id, 0)
+        if po_id < 1:
+            raise UserError(_('po_id is required (positive integer)'))
+        po = self.env['purchase.order'].search(
+            [('id', '=', po_id), ('company_id', '=', self.env.company.id)], limit=1)
+        if not po:
+            raise MissingError(_('Purchase order %s not found in company %s.', po_id, self.env.company.name))
+        previous = po.state
+        if previous in ('cancel',):
+            raise UserError(_("Purchase order %s is cancelled and cannot be confirmed.", po.name))
+        if previous in ('draft', 'sent'):
+            if not po.order_line.filtered(lambda l: not l.display_type):
+                raise UserError(_('Purchase order %s has no product lines; add products before confirming.', po.name))
+            po.button_confirm()
+        state = po.state
+        receipts = po.picking_ids if 'picking_ids' in po._fields else self.env['stock.picking'].browse()
+        messages = {
+            'purchase': 'Purchase order %s confirmed.' % po.name,
+            'to approve': 'Purchase order %s is waiting for approval by a purchase manager.' % po.name,
+            'done': 'Purchase order %s is already locked (done).' % po.name,
+        }
+        return {
+            'success': True,
+            'po_id': po.id,
+            'po_name': po.name,
+            'previous_state': previous,
+            'state': state,
+            'already_confirmed': previous not in ('draft', 'sent'),
+            'needs_approval': state == 'to approve',
+            'date_approve': _dt(po.date_approve),
+            'amount_total': po.amount_total,
+            'receipts': [{'id': p.id, 'name': p.name, 'state': p.state} for p in receipts],
+            'message': ('Purchase order %s is already confirmed.' % po.name)
+            if previous == state == 'purchase' else messages.get(state, 'Purchase order %s is in state %s.' % (po.name, state)),
+        }
