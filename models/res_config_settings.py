@@ -8,6 +8,9 @@ class ResConfigSettings(models.TransientModel):
     grg_quick_upi_enabled = fields.Boolean(string="Quick UPI Pay Button", default=True)
     grg_theme_enabled = fields.Boolean(string="GoRetailGo Branding Theme", default=True)
     grg_gst_tax_autoactivate = fields.Boolean(string="Auto-activate GST Purchase Taxes", default=True)
+    grg_gemini_api_key = fields.Char(string="Gemini API Key", config_parameter='grg_config.gemini_api_key')
+    grg_gemini_model = fields.Char(string="Gemini Model", config_parameter='grg_config.gemini_model',
+                                   default='gemini-flash-lite-latest')
 
     def get_values(self):
         res = super().get_values()

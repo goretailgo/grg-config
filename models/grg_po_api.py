@@ -4,12 +4,15 @@
 Every method runs as the API-key user, in the company chosen by the controller,
 so Odoo access rights, record rules and multi-company rules all apply.
 """
+import base64
 import html
 import json
 import math
 import re
 import time
 from datetime import datetime, timedelta
+
+import requests
 
 from odoo import _, api, fields, models
 from odoo.exceptions import AccessError, MissingError, UserError
@@ -36,6 +39,16 @@ def _dt(value):
 def _n(x):
     """2.0 -> 2 (n8n/JS returned whole numbers as ints)."""
     return int(x) if isinstance(x, float) and x.is_integer() else x
+
+
+def _js_parse_float(v):
+    """JS parseFloat(v) || 0  ('10%' -> 10, '' / null / 'abc' -> 0)."""
+    if isinstance(v, bool) or v is None:
+        return 0.0
+    if isinstance(v, (int, float)):
+        return float(v)
+    m = re.match(r'\s*([-+]?(?:\d+\.?\d*|\.\d+)(?:[eE][-+]?\d+)?)', str(v))
+    return float(m.group(1)) if m else 0.0
 
 
 def _int(value, default):
@@ -993,4 +1006,171 @@ class GrgPoApi(models.AbstractModel):
             'receipts': [{'id': p.id, 'name': p.name, 'state': p.state} for p in receipts],
             'message': ('Purchase order %s is already confirmed.' % po.name)
             if previous == state == 'purchase' else messages.get(state, 'Purchase order %s is in state %s.' % (po.name, state)),
+        }
+
+    # ------------------------------------------------------------ print label
+    LABEL_ZPL = """^XA
+^PW400
+^LL240
+^CI28
+
+^FO0,10
+^A0N,30,35
+^FB400,1,0,C,0
+^FDCOMPANY_NAME^FS
+
+^FO10,45
+^BQN,2,7
+^FDLA,AABB^FS
+
+^FO180,55
+^A0N,40,35
+^FDMRP: YYYY^FS
+
+^FO180,105
+^A0N,30,30
+^FDDiscount: 50%^FS
+
+^FO180,140
+^A0N,30,30
+^FDOffer Price:^FS
+
+^FO180,165
+^GB200,2,2^FS
+
+^FO180,175
+^A0N,50,50
+^FDRs.ZZZZ^FS
+
+^FO180,220
+^GB200,2,2^FS
+
+^XZ"""
+
+    @api.model
+    def _grg_product_price_json(self, product):
+        """Port of khatri_pos_discount parseProductPriceJson(): JSON block in the product's description note."""
+        raw = product.description or product.description_picking or product.description_sale or ''
+        raw = str(raw) if raw else ''
+        if not raw:
+            return None
+        raw = re.sub(r'<[^>]*>', ' ', raw)
+        for a, b in (('&nbsp;', ' '), ('&amp;', '&'), ('&quot;', '"'), ('&#34;', '"'), ('&lt;', '<'), ('&gt;', '>')):
+            raw = raw.replace(a, b)
+        m = re.search(r'\{[\s\S]*\}', raw)
+        if not m:
+            return None
+        try:
+            data = json.loads(m.group(0))
+        except ValueError:
+            return None
+        return data if isinstance(data, dict) else None
+
+    @api.model
+    def grg_print_label(self, barcode):
+        """Port of n8n 'Dynamic Selector Print Label By Barcode' + 'Print Label(50x30) updated'."""
+        barcode = str(barcode or '').strip()
+        if not barcode:
+            raise UserError(_('Missing barcode. Use ?barcode=<BARCODE> in the URL.'))
+        product = self.env['product.product'].search([('barcode', '=', barcode)], limit=1, order='id')
+        if not product:
+            raise MissingError(_("No product found in Odoo with barcode '%s'.", barcode))
+        company = self.env.company
+
+        # discount + round-off from the company Configuration Object (config_user_rp1)
+        cfg = self._grg_apply_odoo_overrides(company.grg_get_po_config()).get('config_user_rp1') or {}
+        # Discount rule = khatri_pos_discount resolveLineDiscount(), from the product's description JSON:
+        #   no JSON / {"price_list_default": true}  -> stepped discount from the Configuration Object
+        #   {"percentage_profit": {"discount": X}} -> X %      {"flat": {"discount": X}} -> X %
+        #   any other JSON                         -> 0 %
+        rule = self._grg_product_price_json(product)
+        if not rule or rule.get('price_list_default') is True:
+            raw_discount = cfg.get('discount_percentage')
+            # '50%' -> [50];  '50% + 25%' -> [50, 25] (stepped: 50% off, then 25% off the rest)
+            if isinstance(raw_discount, str):
+                steps = [float(x) for x in re.findall(r'\d+(?:\.\d+)?', raw_discount)]
+            elif isinstance(raw_discount, (int, float)) and not isinstance(raw_discount, bool):
+                steps = [float(raw_discount)]
+            else:
+                steps = []
+        elif isinstance(rule.get('percentage_profit'), dict):
+            steps = [_js_parse_float(rule['percentage_profit'].get('discount'))]
+        elif isinstance(rule.get('flat'), dict):
+            steps = [_js_parse_float(rule['flat'].get('discount'))]
+        else:
+            steps = []
+        steps = [x for x in steps if 0 < x < 100]
+        remaining = 1.0
+        for x in steps:
+            remaining *= (1 - x / 100)
+        discount = round((1 - remaining) * 100, 4)   # effective total %, e.g. 62.5 for 50% + 25%
+        round_by = cfg.get('mrp_roundof_by')
+        round_by = round_by if isinstance(round_by, (int, float)) and not isinstance(round_by, bool) and round_by > 0 else None
+
+        mrp = product.list_price or 0
+        offer = mrp * remaining
+        offer = (math.floor(offer / round_by + 0.5) * round_by) if round_by else math.floor(offer * 100 + 0.5) / 100
+        mrp, discount, offer = _n(float(mrp)), _n(float(discount)), _n(float(offer))
+        steps = [_n(x) for x in steps]
+        discount_text = ' + '.join('%s%%' % x for x in steps) or '0%'
+        label_product_id = product.default_code or product.barcode or str(product.id)
+
+        def js(v, fallback):   # JS `v || fallback`, then String(v)
+            return str(v) if v else fallback
+
+        zpl_tpl = self.LABEL_ZPL
+        if len(steps) > 1:
+            # "Discount: 50%+25%" does not fit at size 30 in the 220-dot column -> smaller font
+            zpl_tpl = zpl_tpl.replace('^FO180,105\n^A0N,30,30\n^FDDiscount: 50%^FS',
+                                      '^FO180,108\n^A0N,24,20\n^FDDiscount: GRG_DISC_TEXT^FS')
+        zpl = (zpl_tpl
+               .replace('COMPANY_NAME', company.name or 'Default Company')
+               .replace('AABB', label_product_id or 'AABB')
+               .replace('YYYY', js(mrp, '0'))
+               .replace('50%', js(discount, '0') + '%')
+               .replace('ZZZZ', js(offer, '0'))
+               .replace('GRG_DISC_TEXT', discount_text.replace(' ', '')))
+
+        # PNG preview from Labelary (same call as n8n)
+        image_b64, mime, image_error = None, 'image/png', None
+        url = self.env['ir.config_parameter'].sudo().get_param(
+            'grg_config.labelary_url', 'https://api.labelary.com/v1/printers/8dpmm/labels/1.97x1.18/0')
+        if url and url != 'off':
+            try:
+                r = requests.post(url, data=zpl.encode('utf-8'), timeout=20, headers={
+                    'Accept': 'image/png', 'Content-Type': 'application/x-www-form-urlencoded', 'x-rotation': '0'})
+                if r.status_code == 200 and r.content:
+                    image_b64 = base64.b64encode(r.content).decode()
+                    mime = (r.headers.get('Content-Type') or 'image/png').split(';')[0]
+                else:
+                    image_error = 'Labelary HTTP %s: %s' % (r.status_code, r.text[:200])
+            except requests.RequestException as e:
+                image_error = 'Labelary request failed: %s' % e
+
+        label = {
+            'company_name': company.name or 'Default Company',
+            'product_id': label_product_id,
+            'mrp': mrp,
+            'discount': discount,
+            'discount_text': discount_text,
+            'discount_steps': steps,
+            'offer_price': offer,
+            'zpl_data': zpl,
+            'image_base64': image_b64,
+            'image_mime': mime if image_b64 else None,
+            'image_data_uri': 'data:%s;base64,%s' % (mime, image_b64) if image_b64 else None,
+        }
+        if image_error:
+            label['image_error'] = image_error
+        return {
+            'success': True,
+            'product': {
+                'id': product.id,
+                'name': product.name,
+                'barcode': product.barcode,
+                'default_code': product.default_code or None,
+                'category': product.categ_id.display_name or None,
+                'uom': product.uom_id.name or None,
+            },
+            'label': label,
         }

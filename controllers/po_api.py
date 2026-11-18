@@ -103,6 +103,11 @@ class GrgPoApiController(http.Controller):
             return self._json({'success': False, 'error': str(e.args[0])}, status=400)
 
     # -------------------------------------------------------------- routes
+    # Print label by barcode (n8n print-label): ?barcode=<BARCODE> -> product + 50x30 ZPL + PNG preview
+    @http.route(BASE + '/print-label', methods=['GET'], **ROUTE)
+    def print_label(self, barcode=None, **kw):
+        return self._run(lambda api, body: api.grg_print_label(barcode))
+
     # Authentication: validate the API key, return user / company / db
     @http.route(BASE + '/authenticate', methods=['GET', 'POST'], **ROUTE)
     def authenticate(self, **kw):
@@ -171,3 +176,17 @@ class GrgPoApiController(http.Controller):
             body = body if isinstance(body, dict) else {}
             return api.grg_confirm_po(po_id or body.get('po_id') or kw.get('po_id'))
         return self._run(go, with_body=True)
+
+    # Bill parser (n8n parse-bill-v8): multipart/form-data with one or more bill page files
+    # (bill_file, bill_file_2, ...). shop_id (form field or x-shop-id header) is optional.
+    @http.route(BASE + '/parse-bill-v8', methods=['POST'], **ROUTE)
+    def parse_bill_v8(self, **kw):
+        def go(api, body):
+            hreq = request.httprequest
+            files = []
+            for field in hreq.files:
+                for fs in hreq.files.getlist(field):
+                    files.append((field, fs.filename, fs.mimetype, fs.read()))
+            shop_id = hreq.form.get('shop_id') or hreq.form.get('shopId') or hreq.headers.get('x-shop-id')
+            return request.env['grg.bill.parser'].grg_parse_bill(files, shop_id=shop_id)
+        return self._run(go)
