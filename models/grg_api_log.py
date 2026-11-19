@@ -62,13 +62,17 @@ class GrgApiLog(models.Model):
     # --------------------------------------------------------------- purge
     @api.model
     def _grg_purge_old_logs(self):
+        """Daily cron: delete logs older than N days (default 7). One SQL DELETE, fast on large tables."""
         try:
-            days = int(self.env['ir.config_parameter'].sudo().get_param('grg_config.api_log_days', '15'))
+            days = int(self.env['ir.config_parameter'].sudo().get_param('grg_config.api_log_days', '7'))
         except ValueError:
-            days = 15
-        if days > 0:
-            limit = fields.Datetime.now() - timedelta(days=days)
-            self.sudo().search([('request_time', '<', limit)]).unlink()
+            days = 7
+        if days <= 0:
+            days = 7
+        limit = fields.Datetime.now() - timedelta(days=days)
+        self.env.cr.execute("DELETE FROM grg_api_log WHERE request_time < %s", [limit])
+        _logger.info('grg_config: purged %s API log(s) older than %s days', self.env.cr.rowcount, days)
+        self.env.invalidate_all()
 
     # ------------------------------------------------------- UI helpers (RPC)
     @api.model

@@ -9,7 +9,8 @@ class ResConfigSettings(models.TransientModel):
     grg_theme_enabled = fields.Boolean(string="GoRetailGo Branding Theme", default=True)
     grg_gst_tax_autoactivate = fields.Boolean(string="Auto-activate GST Purchase Taxes", default=True)
     grg_api_log_enabled = fields.Boolean(string="Log API requests", default=True)
-    grg_api_log_days = fields.Integer(string="Keep logs (days)", config_parameter='grg_config.api_log_days', default=15)
+    grg_api_log_days = fields.Integer(string="Keep logs (days)", config_parameter='grg_config.api_log_days', default=7,
+                                      help="API logs older than this are deleted automatically every day.")
     grg_api_log_prefixes = fields.Char(string="Logged URL prefixes", config_parameter='grg_config.api_log_prefixes',
                                        default='/grg/api/,/stock-transfer/api/,/pos-module/,/grg_app/')
     grg_gemini_api_key = fields.Char(string="Gemini API Key", config_parameter='grg_config.gemini_api_key')
