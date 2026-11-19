@@ -1,0 +1,12 @@
+<?xml version="1.0" encoding="utf-8"?>
+<odoo noupdate="1">
+    <record id="ir_cron_grg_api_log_purge" model="ir.cron" forcecreate="True">
+        <field name="name">GoRetailGo: purge old API logs</field>
+        <field name="user_id" ref="base.user_root"/>
+        <field name="interval_number">1</field>
+        <field name="interval_type">days</field>
+        <field name="model_id" ref="model_grg_api_log"/>
+        <field name="state">code</field>
+        <field name="code">model._grg_purge_old_logs()</field>
+    </record>
+</odoo>

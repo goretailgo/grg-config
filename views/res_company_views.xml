@@ -32,6 +32,13 @@
                     </div>
                     <field name="grg_po_template" widget="grg_json_editor" options="{'preview': 'form'}" nolabel="1" class="w-100"/>
                 </page>
+                <page string="API Logs" name="grg_api_logs" groups="base.group_system">
+                    <div class="text-muted mb-2">
+                        Every call to the custom APIs (<code>/grg/api/*</code>, <code>/stock-transfer/api/*</code>, <code>/pos-module/*</code>, <code>/grg_app/*</code>)
+                        made with this company. API keys are masked. Configure in Settings &gt; GoRetailGo &gt; API Logs.
+                    </div>
+                    <field name="grg_api_log_count" widget="grg_api_log_viewer" nolabel="1" class="w-100"/>
+                </page>
             </xpath>
         </field>
     </record>

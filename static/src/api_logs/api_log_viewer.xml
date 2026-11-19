@@ -1,0 +1,118 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<templates xml:space="preserve">
+    <t t-name="grg_config.ApiLogViewer">
+        <div class="o_grg_al w-100">
+            <div t-if="!companyId" class="alert alert-info mb-0">Save the company to see its API logs.</div>
+            <t t-else="">
+                <!-- stats -->
+                <div class="o_grg_al_stats d-flex flex-wrap gap-2 mb-2">
+                    <div class="o_grg_al_stat"><span class="o_grg_al_stat_n" t-esc="state.total"/><span>requests</span></div>
+                    <div class="o_grg_al_stat o_grg_al_stat_4" t-on-click="() => this.setFilter('status', state.status === '4xx' ? 'all' : '4xx')">
+                        <span class="o_grg_al_stat_n" t-esc="state.errors4"/><span>4xx client errors</span></div>
+                    <div class="o_grg_al_stat o_grg_al_stat_5" t-on-click="() => this.setFilter('status', state.status === '5xx' ? 'all' : '5xx')">
+                        <span class="o_grg_al_stat_n" t-esc="state.errors5"/><span>5xx server errors</span></div>
+                    <div class="ms-auto d-flex align-items-center gap-2 small text-muted">
+                        <t t-if="state.lastRefresh">Updated <t t-esc="state.lastRefresh.toFormat('HH:mm:ss')"/></t>
+                        <i t-if="state.loading" class="fa fa-circle-o-notch fa-spin"/>
+                    </div>
+                </div>
+                <!-- toolbar -->
+                <div class="o_grg_al_toolbar d-flex flex-wrap align-items-center gap-2 mb-2">
+                    <div class="input-group input-group-sm o_grg_al_search">
+                        <span class="input-group-text"><i class="fa fa-search"/></span>
+                        <input class="form-control" placeholder="Search path, body, response, user…" t-att-value="state.search" t-on-input="onSearchInput"/>
+                    </div>
+                    <div class="btn-group btn-group-sm">
+                        <t t-foreach="['all', '2xx', '4xx', '5xx']" t-as="st" t-key="st">
+                            <button type="button" t-attf-class="btn #{state.status === st ? 'btn-primary' : 'btn-outline-secondary'}"
+                                    t-on-click="() => this.setFilter('status', st)" t-esc="st === 'all' ? 'All' : st"/>
+                        </t>
+                    </div>
+                    <select class="form-select form-select-sm w-auto" t-on-change="(ev) => this.setFilter('method', ev.target.value)">
+                        <t t-foreach="['all', 'GET', 'POST', 'PUT', 'DELETE']" t-as="m" t-key="m">
+                            <option t-att-value="m" t-att-selected="state.method === m" t-esc="m === 'all' ? 'All methods' : m"/>
+                        </t>
+                    </select>
+                    <select class="form-select form-select-sm w-auto o_grg_al_ep" t-on-change="(ev) => this.setFilter('endpoint', ev.target.value)">
+                        <option value="" t-att-selected="!state.endpoint">All endpoints</option>
+                        <t t-foreach="state.endpoints" t-as="e" t-key="e.path">
+                            <option t-att-value="e.path" t-att-selected="state.endpoint === e.path" t-esc="e.path + '  (' + e.count + ')'"/>
+                        </t>
+                    </select>
+                    <select class="form-select form-select-sm w-auto" t-on-change="(ev) => this.setFilter('range', ev.target.value)">
+                        <t t-foreach="RANGES" t-as="r" t-key="r">
+                            <option t-att-value="r" t-att-selected="state.range === r" t-esc="r === 'all' ? 'All time' : 'Last ' + r"/>
+                        </t>
+                    </select>
+                    <div class="ms-auto d-flex gap-2">
+                        <button type="button" t-attf-class="btn btn-sm #{state.auto ? 'btn-success' : 'btn-outline-secondary'}" t-on-click="toggleAuto" title="Refresh every 5 seconds">
+                            <i t-attf-class="fa #{state.auto ? 'fa-pause' : 'fa-play'} me-1"/>Live
+                        </button>
+                        <button type="button" class="btn btn-sm btn-outline-secondary" t-on-click="() => this.reload()"><i class="fa fa-refresh me-1"/>Refresh</button>
+                        <button type="button" class="btn btn-sm btn-outline-danger" t-on-click="clearLogs"><i class="fa fa-trash me-1"/>Clear</button>
+                    </div>
+                </div>
+                <!-- table -->
+                <div class="o_grg_al_table_wrap">
+                    <table class="table table-sm table-hover mb-0 o_grg_al_table">
+                        <thead>
+                            <tr><th style="width:150px">Time</th><th style="width:70px">Method</th><th style="width:70px">Status</th>
+                                <th>Endpoint</th><th style="width:150px">User</th><th class="text-end" style="width:90px">Duration</th><th class="text-end" style="width:80px">Size</th></tr>
+                        </thead>
+                        <tbody>
+                            <tr t-if="!state.logs.length"><td colspan="7" class="text-center text-muted py-4">
+                                <i class="fa fa-inbox fa-2x d-block mb-2"/>No API requests match these filters.</td></tr>
+                            <t t-foreach="state.logs" t-as="log" t-key="log.id">
+                                <tr t-attf-class="o_grg_al_row #{state.selected and state.selected.id === log.id ? 'o_grg_al_active' : ''}" t-on-click="() => this.select(log)">
+                                    <td><span t-esc="fmtTime(log.request_time)"/><div class="o_grg_al_age" t-esc="fmtAge(log.request_time)"/></td>
+                                    <td><span t-attf-class="o_grg_al_method o_grg_al_m_#{log.method}" t-esc="log.method"/></td>
+                                    <td><span t-attf-class="o_grg_al_status #{statusClass(log.status_code)}" t-esc="log.status_code"/></td>
+                                    <td class="o_grg_al_path"><span t-esc="log.path"/><span t-if="log.query_string" class="text-muted" t-esc="'?' + log.query_string"/>
+                                        <div t-if="log.error_message" class="text-danger small text-truncate" t-esc="log.error_message"/></td>
+                                    <td class="text-truncate" t-esc="log.user_id ? log.user_id[1] : '—'"/>
+                                    <td t-attf-class="text-end #{durationClass(log.duration_ms)}" t-esc="fmtMs(log.duration_ms)"/>
+                                    <td class="text-end text-muted" t-esc="fmtSize(log.response_size)"/>
+                                </tr>
+                                <tr t-if="state.selected and state.selected.id === log.id" class="o_grg_al_detail_row">
+                                    <td colspan="7">
+                                        <t t-set="sel" t-value="state.selected"/>
+                                        <div class="o_grg_al_detail">
+                                            <div class="d-flex flex-wrap align-items-center gap-3 mb-2 small">
+                                                <span><b>Log #</b><t t-esc="sel.id"/></span>
+                                                <span><b>IP</b> <t t-esc="sel.ip || '—'"/></span>
+                                                <span class="text-truncate" style="max-width:420px"><b>Client</b> <t t-esc="sel.user_agent || '—'"/></span>
+                                                <span><b>Request</b> <t t-esc="fmtSize(sel.request_size) || '0 B'"/></span>
+                                                <span><b>Response</b> <t t-esc="sel.response_content_type || '—'"/></span>
+                                                <div class="ms-auto d-flex gap-2">
+                                                    <button type="button" class="btn btn-sm btn-outline-primary" t-on-click.stop="() => this.copy(this.curl(sel), 'cURL')"><i class="fa fa-terminal me-1"/>Copy cURL</button>
+                                                    <button type="button" class="btn btn-sm btn-outline-secondary" t-on-click.stop="() => this.copy(this.pretty(sel.response_body), 'Response')"><i class="fa fa-copy me-1"/>Copy response</button>
+                                                </div>
+                                            </div>
+                                            <div t-if="sel.error_message" class="alert alert-danger py-1 px-2 small mb-2"><i class="fa fa-bug me-1"/><t t-esc="sel.error_message"/></div>
+                                            <ul class="nav nav-tabs o_grg_al_tabs">
+                                                <t t-foreach="[['response', 'Response'], ['request', 'Request body'], ['headers', 'Request headers'], ['curl', 'cURL']]" t-as="tab" t-key="tab[0]">
+                                                    <li class="nav-item"><a href="#" t-attf-class="nav-link #{state.detailTab === tab[0] ? 'active' : ''}"
+                                                        t-on-click.prevent.stop="() => this.setTab(tab[0])" t-esc="tab[1]"/></li>
+                                                </t>
+                                            </ul>
+                                            <pre class="o_grg_al_code" t-if="state.detailTab === 'response'"><t t-out="highlight(sel.response_body) || '(empty)'"/></pre>
+                                            <pre class="o_grg_al_code" t-if="state.detailTab === 'request'"><t t-out="highlight(sel.request_body) || '(no body)'"/></pre>
+                                            <pre class="o_grg_al_code" t-if="state.detailTab === 'headers'"><t t-out="highlight(sel.request_headers)"/></pre>
+                                            <pre class="o_grg_al_code" t-if="state.detailTab === 'curl'" t-esc="curl(sel)"/>
+                                        </div>
+                                    </td>
+                                </tr>
+                            </t>
+                        </tbody>
+                    </table>
+                </div>
+                <!-- pager -->
+                <div class="d-flex align-items-center justify-content-end gap-2 mt-2 small text-muted" t-if="state.total > state.pageSize">
+                    <span><t t-esc="state.page * state.pageSize + 1"/>–<t t-esc="pagerEnd"/> of <t t-esc="state.total"/></span>
+                    <button type="button" class="btn btn-sm btn-outline-secondary" t-att-disabled="state.page === 0" t-on-click="() => this.goPage(-1)"><i class="fa fa-chevron-left"/></button>
+                    <button type="button" class="btn btn-sm btn-outline-secondary" t-att-disabled="(state.page + 1) * state.pageSize >= state.total" t-on-click="() => this.goPage(1)"><i class="fa fa-chevron-right"/></button>
+                </div>
+            </t>
+        </div>
+    </t>
+</templates>

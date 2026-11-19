@@ -190,6 +190,12 @@ class ResCompany(models.Model):
         help="When the Khatri POS discount fields exist on the company's POS, the API overrides "
              "config_user_rp1.discount_percentage with the live POS discount (e.g. \"50% + 25%\").")
 
+    grg_api_log_count = fields.Integer(string="API Logs", compute='_compute_grg_api_log_count')
+
+    def _compute_grg_api_log_count(self):
+        for company in self:
+            company.grg_api_log_count = 0   # the viewer widget loads the logs itself
+
     @api.constrains('grg_po_config', 'grg_po_template')
     def _check_grg_po_json(self):
         for company in self:

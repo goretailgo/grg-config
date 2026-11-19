@@ -1,6 +1,6 @@
 {
     'name': 'GRG Config - GoRetailGo Customizations',
-    'version': '19.0.1.14.0',
+    'version': '19.0.1.15.0',
     'category': 'Point of Sale',
     'summary': 'GoRetailGo customer customizations bundle (POS, branding, tax defaults, settings)',
     'author': 'GoRetailGo',
@@ -8,6 +8,8 @@
     'data': [
         'views/res_config_settings_views.xml',
         'views/res_company_views.xml',
+        'security/ir.model.access.csv',
+        'data/ir_cron.xml',
     ],
     'assets': {
         'web.assets_backend': [
@@ -16,6 +18,9 @@
             'grg_config/static/src/json_editor/json_editor.js',
             'grg_config/static/src/json_editor/json_editor.xml',
             'grg_config/static/src/json_editor/json_editor.scss',
+            'grg_config/static/src/api_logs/api_log_viewer.js',
+            'grg_config/static/src/api_logs/api_log_viewer.xml',
+            'grg_config/static/src/api_logs/api_log_viewer.scss',
         ],
         'point_of_sale._assets_pos': [
             'grg_config/static/src/app/reload_guard/reload_guard.js',

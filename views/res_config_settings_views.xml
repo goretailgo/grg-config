@@ -18,6 +18,15 @@
                             <field name="grg_gst_tax_autoactivate"/>
                         </setting>
                     </block>
+                    <block title="API Logs">
+                        <setting id="grg_api_log_setting" string="Log API requests" help="Request + response of every custom API call, shown in Companies > API Logs. API keys are masked.">
+                            <field name="grg_api_log_enabled"/>
+                            <div class="content-group" invisible="not grg_api_log_enabled">
+                                <div class="row mt-2"><label for="grg_api_log_days" class="col-lg-4 o_light_label"/><field name="grg_api_log_days"/></div>
+                                <div class="row"><label for="grg_api_log_prefixes" class="col-lg-4 o_light_label"/><field name="grg_api_log_prefixes"/></div>
+                            </div>
+                        </setting>
+                    </block>
                     <block title="Bill Parser (Gemini)">
                         <setting id="grg_gemini_setting" string="Gemini API" help="Used by the PO app bill parser API (/grg/api/parse-bill-v8).">
                             <div class="content-group">
