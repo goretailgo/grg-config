@@ -8,6 +8,7 @@
 """
 import base64
 import hashlib
+import io
 import json
 import logging
 import os
@@ -22,6 +23,11 @@ from datetime import datetime, timezone
 import requests
 
 from odoo import api, models
+
+try:
+    from odoo.tools.pdf import PdfFileReader, PdfFileWriter
+except ImportError:  # pragma: no cover
+    PdfFileReader = PdfFileWriter = None
 
 _logger = logging.getLogger(__name__)
 
@@ -67,6 +73,34 @@ class GrgBillParser(models.AbstractModel):
         return None
 
     @api.model
+    def _grg_split_pdf(self, fname, data):
+        """A multi-page PDF becomes one single-page PDF per page, so every page gets its own
+        Gemini call (the prompt reads ONE page). Falls back to the whole file if it can't be split."""
+        whole = [{'file_name': fname, 'mime_type': 'application/pdf', 'data': data}]
+        if PdfFileReader is None:
+            return whole
+        try:
+            reader = PdfFileReader(io.BytesIO(data), strict=False)
+            if reader.is_encrypted:
+                reader.decrypt('')
+            count = len(reader.pages)
+            if count <= 1:
+                return whole
+            limit = int(self._grg_param('pdf_max_pages', '20'))
+            out = []
+            for i, page in enumerate(reader.pages[:limit]):
+                writer = PdfFileWriter()
+                writer.add_page(page)
+                buf = io.BytesIO()
+                writer.write(buf)
+                out.append({'file_name': '%s (page %d of %d)' % (fname or 'bill.pdf', i + 1, count),
+                            'mime_type': 'application/pdf', 'data': buf.getvalue()})
+            return out
+        except Exception as e:  # noqa: BLE001 - never fail the request because of splitting
+            _logger.warning('grg bill parser: could not split PDF %s (%s), sending it whole', fname, e)
+            return whole
+
+    @api.model
     def _grg_bill_pages(self, files, shop_id=None):
         """files: [(field_name, file_name, declared_mime, bytes)] in upload order.
         Returns (prep_list, pages) or (error_dict, None)."""
@@ -82,7 +116,10 @@ class GrgBillParser(models.AbstractModel):
                         'message': 'Unsupported file type in field "%s": %s%s. Allowed: PDF, JPEG, PNG, WEBP. '
                                    'First bytes: %s' % (field, declared, ' (%s)' % fname if fname else '',
                                                         data[:12].hex().upper() or '(empty)')}, None
-            pages.append({'file_name': fname, 'mime_type': mime, 'data': data})
+            if mime == 'application/pdf':
+                pages.extend(self._grg_split_pdf(fname, data))
+            else:
+                pages.append({'file_name': fname, 'mime_type': mime, 'data': data})
         # drop byte-identical files (same photo attached twice)
         seen, unique = set(), []
         for p in pages:

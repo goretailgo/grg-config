@@ -1,6 +1,6 @@
 {
     'name': 'GRG Config - GoRetailGo Customizations',
-    'version': '19.0.1.16.0',
+    'version': '19.0.1.17.0',
     'category': 'Point of Sale',
     'summary': 'GoRetailGo customer customizations bundle (POS, branding, tax defaults, settings)',
     'author': 'GoRetailGo',
